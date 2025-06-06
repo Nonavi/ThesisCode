@@ -22,20 +22,19 @@ def generate_launch_description():
             }.items()
         ),
 
+        # Octomap completo (igual que en robot=real)
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(octomap_path, 'launch', 'mi_octomap_rviz.launch.py')
+            )
+        ),
+
         # Static TF: link_eef → camera_link
         Node(
             package='tf2_ros',
             executable='static_transform_publisher',
             name='static_tf_real',
             arguments=['0.05', '0', '0.07', '0', '-1.5708', '3.1416', 'link_eef', 'camera_link'],
-            output='screen'
-        ),
-
-        # Invocador node
-        Node(
-            package='hello_moveit',
-            executable='invocador_node',
-            name='invocador_node',
             output='screen'
         ),
 

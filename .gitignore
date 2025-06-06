@@ -1,0 +1,16 @@
+# Carpetas de colcon/ROS2 que no conviene versionar:
+build/
+install/
+log/
+colcon_metadata/
+
+# Archivos temporales de Python
+*.pyc
+__pycache__/
+
+# Historias de editores
+*.swp
+*~
+.vscode/
+.idea/
+

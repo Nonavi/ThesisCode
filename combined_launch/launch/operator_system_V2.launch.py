@@ -30,6 +30,16 @@ def generate_launch_description():
             output='screen'
         ),
 
+
+        # Invocador node Agregado!
+        Node(
+            package='hello_moveit',
+            executable='invocador_node',
+            name='invocador_node',
+            output='screen'
+        ),
+
+
         # DualSense teleop
         Node(
             package='hello_moveit',
