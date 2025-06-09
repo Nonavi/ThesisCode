@@ -18,7 +18,8 @@ def generate_launch_description():
             ),
             launch_arguments={
                 'pointcloud.enable': 'true',
-                'align_depth.enable': 'true'
+                'align_depth.enable': 'true',
+                'use_intra_process_comms': 'false'
             }.items()
         ),
 
