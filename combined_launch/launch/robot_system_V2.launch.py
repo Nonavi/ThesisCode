@@ -54,4 +54,12 @@ def generate_launch_description():
             name='paralelepipedo_interseccion_node',
             output='screen'
         ),
+
+        # Nuevo nodo: save_node
+        Node(
+            package='hello_moveit',
+            executable='save_node',
+            name='save_node',
+            output='screen'
+        ),
     ])

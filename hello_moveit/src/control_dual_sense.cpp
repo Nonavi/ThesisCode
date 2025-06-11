@@ -75,124 +75,107 @@ private:
   {
     const std::string & command = msg->data;
     RCLCPP_INFO(this->get_logger(), "Recibido comando: '%s'", command.c_str());
-  
-    // Si es un comando tipo "degrees: roll pitch yaw" → parsear
-    if (command.rfind("degrees:", 0) == 0 || command.rfind("radians:", 0) == 0) {
-  
+
+    // Comando "plan:"
+    if (command.rfind("plan:", 0) == 0) {
+      std::string sub_command = command.substr(std::string("plan:").size());
+      RCLCPP_INFO(this->get_logger(), "PLAN → preparando pose + planificando: '%s'", sub_command.c_str());
+
+      // Simular recepción de sub-comando → llamar a command_callback de nuevo
+      std_msgs::msg::String fake_msg;
+      fake_msg.data = sub_command;
+
+      // Mover el marker
+      this->command_callback(std::make_shared<std_msgs::msg::String>(fake_msg));
+
+      // Planificar en un hilo
+      std::thread planning_thread([this]() {
+        moveit::planning_interface::MoveGroupInterface::Plan local_plan;
+        {
+          std::lock_guard<std::mutex> lock(pose_mutex_);
+          move_group_->setPlannerId("RRTstar");
+          move_group_->setPlanningTime(1.0);
+          move_group_->setPoseTarget(target_pose_);
+          if (move_group_->plan(local_plan) == moveit::core::MoveItErrorCode::SUCCESS) {
+            RCLCPP_INFO(this->get_logger(), "Planificación exitosa. Listo para ejecutar.");
+            std::lock_guard<std::mutex> lock(plan_mutex_);
+            last_plan_ = local_plan;
+            plan_available_ = true;
+          } else {
+            RCLCPP_WARN(this->get_logger(), "La planificación falló.");
+            plan_available_ = false;
+          }
+        }
+      });
+      planning_thread.detach();
+
+      return;
+    }
+
+    // Comando "execute"
+    if (command == "execute") {
+      RCLCPP_INFO(this->get_logger(), "EXECUTE → intentando ejecutar el último plan.");
+      if (plan_available_) {
+        std::thread exec_thread([this]() {
+          RCLCPP_INFO(this->get_logger(), "Ejecutando trayectoria planificada...");
+          std::lock_guard<std::mutex> lock(plan_mutex_);
+          move_group_->execute(last_plan_);
+          RCLCPP_INFO(this->get_logger(), "Ejecución terminada.");
+        });
+        exec_thread.detach();
+      } else {
+        RCLCPP_WARN(this->get_logger(), "No hay un plan disponible. Manda primero 'plan:' para planificar.");
+      }
+      return;
+    }
+
+    // Comando "degrees:" → solo mueve el marker (sin plan ni ejecución)
+    if (command.rfind("degrees:", 0) == 0) {
       std::istringstream iss(command);
       std::string mode;
+      double x_in, y_in, z_in;
       double roll_in, pitch_in, yaw_in;
-      iss >> mode >> roll_in >> pitch_in >> yaw_in;
-  
-      double roll, pitch, yaw;
-      if (mode == "degrees:") {
-        roll  = roll_in  * M_PI / 180.0;
-        pitch = pitch_in * M_PI / 180.0;
-        yaw   = yaw_in   * M_PI / 180.0;
-      } else if (mode == "radians:") {
-        roll  = roll_in;
-        pitch = pitch_in;
-        yaw   = yaw_in;
-      } else {
-        RCLCPP_WARN(this->get_logger(), "Modo desconocido en el comando.");
-        return;
-      }
-  
-      RCLCPP_INFO(this->get_logger(), "Setting RPY → Roll: %.3f deg, Pitch: %.3f deg, Yaw: %.3f deg",
-        roll * 180.0 / M_PI, pitch * 180.0 / M_PI, yaw * 180.0 / M_PI);
-  
+      iss >> mode >> x_in >> y_in >> z_in >> roll_in >> pitch_in >> yaw_in;
+
+      double roll  = roll_in  * M_PI / 180.0;
+      double pitch = pitch_in * M_PI / 180.0;
+      double yaw   = yaw_in   * M_PI / 180.0;
+
+      RCLCPP_INFO(this->get_logger(), "Setting Pose → x: %.3f, y: %.3f, z: %.3f | Roll: %.3f deg, Pitch: %.3f deg, Yaw: %.3f deg",
+        x_in, y_in, z_in, roll_in, pitch_in, yaw_in);
+
       tf2::Quaternion ori;
       ori.setRPY(roll, pitch, yaw);
       ori.normalize();
-  
-      tf2::Vector3 pos(0.234, 0.063, 0.267);  // posición fija para pruebas
-  
+
+      tf2::Vector3 pos(x_in, y_in, z_in);
+
       {
         std::lock_guard<std::mutex> lock(pose_mutex_);
         current_tf_.setOrigin(pos);
         current_tf_.setRotation(ori);
-  
+
         tf2::toMsg(current_tf_, target_pose_);
         move_group_->setPoseTarget(target_pose_);
       }
-  
-      // FORZAR PUBLICACIÓN EN RViz:
+
+      // PUBLICAR en RViz:
       geometry_msgs::msg::PoseStamped goal_pose;
       goal_pose.header.stamp = this->now();
       goal_pose.header.frame_id = "world";
       goal_pose.pose = target_pose_;
       goal_pose_publisher_->publish(goal_pose);
-  
-      // Mostrar el quaternion que se aplica → para que puedas copiarlo si quieres
+
       RCLCPP_INFO(this->get_logger(), "Applied Quaternion → x: %.4f, y: %.4f, z: %.4f, w: %.4f",
         ori.x(), ori.y(), ori.z(), ori.w());
-  
+
       return;
     }
-  
-    // Si no es un comando con RPY, entonces usar la tabla normal:
-  
-    // Creamos bien los quaternions
-    tf2::Quaternion q_home;
-    q_home.setRPY(-M_PI, 0.0, 0.0);
-  
-    tf2::Quaternion q_pose1;
-    q_pose1.setRPY(M_PI / 2, 0.0, M_PI / 2);
-  
-    tf2::Quaternion q_pose2;
-    q_pose2.setRPY(0.0, M_PI / 2, 0.0);
-  
-    tf2::Quaternion q_pose3;
-    q_pose3.setRPY(M_PI / 2, 0.0, 0.0);
-  
-    tf2::Quaternion q_pose4;
-    q_pose4.setRPY(0.0, M_PI / 2, 0.0);
-  
-    tf2::Quaternion q_pose5;
-    q_pose5.setRPY(0.0, 0.0, M_PI / 2);
-  
-    tf2::Quaternion q_pose6;
-    q_pose6.setRPY(-M_PI / 2, -M_PI / 2, M_PI);
-  
-    std::unordered_map<std::string, std::pair<tf2::Vector3, tf2::Quaternion>> predefined_poses = {
-      {"home", { tf2::Vector3(0.206, 0.0, 0.121), q_home }},
-      {"pose1", { tf2::Vector3(0.234, 0.063, 0.267), q_pose1 }},
-      {"pose2", { tf2::Vector3(0.250, -0.1, 0.180), q_pose2 }},
-      {"pose3", { tf2::Vector3(0.234, 0.063, 0.267), q_pose3 }},
-      {"pose4", { tf2::Vector3(0.234, 0.063, 0.267), q_pose4 }},
-      {"pose5", { tf2::Vector3(0.234, 0.063, 0.267), q_pose5 }},
-      {"pose6", { tf2::Vector3(0.234, 0.063, 0.267), q_pose6 }}
-    };
-  
-    if (predefined_poses.find(command) == predefined_poses.end()) {
-      RCLCPP_WARN(this->get_logger(), "Pose '%s' no encontrada en tabla de poses predefinidas.", command.c_str());
-      return;
-    }
-  
-    tf2::Vector3 pos = predefined_poses[command].first;
-    tf2::Quaternion ori = predefined_poses[command].second;
-    ori.normalize();
-  
-    {
-      std::lock_guard<std::mutex> lock(pose_mutex_);
-      current_tf_.setOrigin(pos);
-      current_tf_.setRotation(ori);
-  
-      tf2::toMsg(current_tf_, target_pose_);
-      move_group_->setPoseTarget(target_pose_);
-    }
-  
-    // PUBLICAR en RViz:
-    geometry_msgs::msg::PoseStamped goal_pose;
-    goal_pose.header.stamp = this->now();
-    goal_pose.header.frame_id = "world";
-    goal_pose.pose = target_pose_;
-    goal_pose_publisher_->publish(goal_pose);
-  
-    // Mostrar quaternion también aquí:
-    RCLCPP_INFO(this->get_logger(), "Applied Quaternion → x: %.4f, y: %.4f, z: %.4f, w: %.4f",
-      ori.x(), ori.y(), ori.z(), ori.w());
+
+    // Si no es un comando válido:
+    RCLCPP_WARN(this->get_logger(), "Comando no reconocido: '%s'", command.c_str());
   }
+
   
   // === EL RESTO de tus funciones originales ===
 
@@ -239,7 +222,20 @@ private:
 
     if (msg->buttons[0] == 1 && !plan_button_pressed_) {
       plan_button_pressed_ = true;
-
+    
+      // === PUBLICAR guardar_cilindro_mas_cercano ===
+      auto guardar_cilindro_pub = this->create_publisher<std_msgs::msg::Bool>(
+        "/guardar_cilindro_mas_cercano", 10);
+    
+      std_msgs::msg::Bool msg_guardar;
+      msg_guardar.data = true;
+    
+      // Publicamos UNA VEZ (luego destruimos el publisher temporal)
+      guardar_cilindro_pub->publish(msg_guardar);
+    
+      RCLCPP_INFO(this->get_logger(), "Solicitud enviada → Guardar cilindro más cercano.");
+    
+      // === PLANEAR ===
       std::thread planning_thread([this]() {
         moveit::planning_interface::MoveGroupInterface::Plan local_plan;
         {
@@ -260,6 +256,7 @@ private:
       });
       planning_thread.detach();
     }
+    
     if (msg->buttons[0] == 0)
       plan_button_pressed_ = false;
 
