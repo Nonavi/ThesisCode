@@ -107,95 +107,19 @@ void OctomapVoxelsWithSize::onOctomap(const octomap_msgs::msg::Octomap::SharedPt
 
   pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
   pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
-  
   seg.segment(*inliers, *coefficients);
-  bool valid_plane = (coefficients->values.size() >= 4);
+  if (coefficients->values.size() < 4) return;
 
-  // Compute bounding box of plane in XY
-  float xmin = std::numeric_limits<float>::max();
-  float xmax = std::numeric_limits<float>::lowest();
-  float ymin = std::numeric_limits<float>::max();
-  float ymax = std::numeric_limits<float>::lowest();
-
-  for (int idx : inliers->indices) {
-      const auto& pt = cloud_temp->points[idx];
-      xmin = std::min(xmin, pt.x);
-      xmax = std::max(xmax, pt.x);
-      ymin = std::min(ymin, pt.y);
-      ymax = std::max(ymax, pt.y);
-  }
-
-  float size_x = xmax - xmin;
-  float size_y = ymax - ymin;
-  float area = size_x * size_y;
-  float density = static_cast<float>(inliers->indices.size()) / area;
-  const float density_threshold = 1000.0f;  // ejemplo razonable
-  
-  // Threshold in m² (example: 0.2 m² → 20x20 cm table)
-  const float area_threshold = 0.04f;
-
-  // Prepare table object (always publish ADD or REMOVE for consistency)
-  moveit_msgs::msg::CollisionObject table_obj;
-  table_obj.id = "table_plane";
-  table_obj.header.frame_id = "world";
-
-  if (area >= area_threshold && density >= density_threshold){
-      // Plano suficientemente grande → publicar como mesa
-      RCLCPP_INFO(this->get_logger(), "Plano detectado de %.2f x %.2f m (%.2f m²), publicando mesa.", size_x, size_y, area);
-
-      // Calcular centro del plano en X, Y, y Z
-      float center_x = (xmin + xmax) / 2.0f;
-      float center_y = (ymin + ymax) / 2.0f;
-
-      // Promediar Z de los puntos del plano
-      float sum_z = 0.0f;
-      for (int idx : inliers->indices) {
-          sum_z += cloud_temp->points[idx].z;
-      }
-      float avg_z = sum_z / static_cast<float>(inliers->indices.size());
-
-      shape_msgs::msg::SolidPrimitive table_primitive;
-      table_primitive.type = shape_msgs::msg::SolidPrimitive::BOX;
-      table_primitive.dimensions.resize(3);
-      table_primitive.dimensions[0] = size_x;
-      table_primitive.dimensions[1] = size_y;
-      table_primitive.dimensions[2] = 0.02f;  // Altura delgada para representar la mesa
-
-      geometry_msgs::msg::Pose table_pose;
-      table_pose.position.x = center_x;
-      table_pose.position.y = center_y;
-      table_pose.position.z = avg_z;  // Altura media del plano
-      table_pose.orientation.w = 1.0;
-
-      table_obj.primitives.push_back(table_primitive);
-      table_obj.primitive_poses.push_back(table_pose);
-      table_obj.operation = moveit_msgs::msg::CollisionObject::ADD;
-  } else {
-      // Plano demasiado pequeño → eliminar mesa de la escena si existiera
-      RCLCPP_WARN(this->get_logger(),"Plano no válido: area %.2f m², densidad %.1f pts/m² → eliminando mesa.",area, density);
-      table_obj.operation = moveit_msgs::msg::CollisionObject::REMOVE;
-  }
-
-  // Publicar la mesa (ADD o REMOVE)
-  pub_objects_->publish(table_obj);
+  float a = coefficients->values[0];
+  float b = coefficients->values[1];
+  float c = coefficients->values[2];
+  float d = coefficients->values[3];
 
   pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_all(new pcl::PointCloud<pcl::PointXYZI>);
-
-  if (valid_plane) {
-      float a = coefficients->values[0];
-      float b = coefficients->values[1];
-      float c = coefficients->values[2];
-      float d = coefficients->values[3];
-  
-      for (const auto& pt : cloud_temp->points) {
-        float dist = a * pt.x + b * pt.y + c * pt.z + d;
-        if (dist > 0.01) cloud_all->points.push_back(pt);
-      }
-  } else {
-      // No hay plano válido → usar toda la nube sin filtrar
-      *cloud_all = *cloud_temp;
+  for (const auto& pt : cloud_temp->points) {
+    float dist = a * pt.x + b * pt.y + c * pt.z + d;
+    if (dist > 0.01) cloud_all->points.push_back(pt);
   }
-  
   cloud_all->width = cloud_all->points.size();
   cloud_all->height = 1;
 
@@ -239,7 +163,7 @@ void OctomapVoxelsWithSize::onOctomap(const octomap_msgs::msg::Octomap::SharedPt
       cy /= indices.indices.size();
 
       std::map<float, int> growth;
-      for (float r = 0.01f; r <= 0.04f; r += 0.005f) {
+      for (float r = 0.02f; r <= 0.04f; r += 0.005f) {
         int count = 0;
         for (int idx : indices.indices) {
           const auto& p = slice_cloud->points[idx];

@@ -28,6 +28,9 @@ find_package(tf2_ros REQUIRED)
 find_package(tf2_sensor_msgs REQUIRED)
 # Para guardar:
 find_package(srdfdom REQUIRED)
+# Para mejorar trayectoria
+find_package(moveit_ros_planning_interface REQUIRED)
+find_package(moveit_core REQUIRED)
 
 
 
@@ -159,6 +162,7 @@ ament_target_dependencies(dual_sense_teleop_node
   rclcpp
   moveit_msgs
   moveit_ros_planning_interface
+  moveit_core
 )
 # Si dual_sense_teleop_node usa funciones de PCL, puedes enlazar ${PCL_LIBRARIES} también.
 # target_link_libraries(dual_sense_teleop_node ${PCL_LIBRARIES})

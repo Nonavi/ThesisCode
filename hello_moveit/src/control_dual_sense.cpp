@@ -15,7 +15,7 @@ class DualSenseTeleop : public rclcpp::Node
 {
 public:
   DualSenseTeleop() : Node("dual_sense_teleop"),
-                      absolute_mode_(true),
+                      absolute_mode_(false),
                       toggle_mode_pressed_(false),
                       plan_button_pressed_(false),
                       execute_button_pressed_(false),
@@ -41,6 +41,8 @@ public:
 
     scale_translation_ = 0.01;
     scale_rotation_ = 0.005;
+    button_z_scale_ = 1.0 / 3.0;  // ≈ 0.3333, basado en tu razonamiento piramidal
+
 
     timer_ = this->create_wall_timer(
       std::chrono::milliseconds(20),
@@ -94,7 +96,8 @@ private:
         {
           std::lock_guard<std::mutex> lock(pose_mutex_);
           move_group_->setPlannerId("RRTstar");
-          move_group_->setPlanningTime(1.0);
+          move_group_->setPlanningTime(5.0);
+          move_group_->setNumPlanningAttempts(1);
           move_group_->setPoseTarget(target_pose_);
           if (move_group_->plan(local_plan) == moveit::core::MoveItErrorCode::SUCCESS) {
             RCLCPP_INFO(this->get_logger(), "Planificación exitosa. Listo para ejecutar.");
@@ -171,6 +174,42 @@ private:
 
       return;
     }
+    
+    // Comando "pose:" → mueve el marker a la pose EXACTA (posición + cuaternión)
+    if (command.rfind("pose:", 0) == 0) {
+      std::istringstream iss(command);
+      std::string mode;
+      double x_in, y_in, z_in;
+      double qx_in, qy_in, qz_in, qw_in;
+      iss >> mode >> x_in >> y_in >> z_in >> qx_in >> qy_in >> qz_in >> qw_in;
+
+      tf2::Quaternion ori(qx_in, qy_in, qz_in, qw_in);
+      ori.normalize();  // seguridad extra
+
+      tf2::Vector3 pos(x_in, y_in, z_in);
+
+      {
+        std::lock_guard<std::mutex> lock(pose_mutex_);
+        current_tf_.setOrigin(pos);
+        current_tf_.setRotation(ori);
+
+        tf2::toMsg(current_tf_, target_pose_);
+        move_group_->setPoseTarget(target_pose_);
+      }
+
+      // PUBLICAR en RViz:
+      geometry_msgs::msg::PoseStamped goal_pose;
+      goal_pose.header.stamp = this->now();
+      goal_pose.header.frame_id = "world";
+      goal_pose.pose = target_pose_;
+      goal_pose_publisher_->publish(goal_pose);
+
+      RCLCPP_INFO(this->get_logger(), "Applied Pose → x: %.4f, y: %.4f, z: %.4f | qx: %.4f, qy: %.4f, qz: %.4f, qw: %.4f",
+        x_in, y_in, z_in, qx_in, qy_in, qz_in, qw_in);
+
+      return;
+    }
+
 
     // Si no es un comando válido:
     RCLCPP_WARN(this->get_logger(), "Comando no reconocido: '%s'", command.c_str());
@@ -196,26 +235,25 @@ private:
       }
       if (msg->buttons[1] == 0) toggle_mode_pressed_ = false;
 
-      vel_dx_ = msg->axes[0] * scale_translation_;
       if (absolute_mode_) {
         vel_dx_ = msg->axes[0] * scale_translation_;
         vel_dy_ = -msg->axes[1] * scale_translation_;
         vel_dz_ = 0.0;
-        if (msg->buttons[9] == 1) vel_dz_ += scale_translation_;
-        if (msg->buttons[10] == 1) vel_dz_ -= scale_translation_;
+        if (msg->buttons[9] == 1) vel_dz_ += scale_translation_ * button_z_scale_;
+        if (msg->buttons[10] == 1) vel_dz_ -= scale_translation_ * button_z_scale_;
       
         vel_droll_  = msg->axes[2] * scale_rotation_;
-        vel_dpitch_ = msg->axes[3] * scale_rotation_;
+        vel_dpitch_ = (-1) * msg->axes[3] * scale_rotation_;
         vel_dyaw_   = ((msg->axes[4] - msg->axes[5]) / 2.0) * scale_rotation_;
       } else {
         vel_dz_ = msg->axes[1] * scale_translation_;
         vel_dy_ = -msg->axes[0] * scale_translation_;
         vel_dx_ = 0.0;
-        if (msg->buttons[9] == 1) vel_dx_ += scale_translation_;
-        if (msg->buttons[10] == 1) vel_dx_ -= scale_translation_;
+        if (msg->buttons[9] == 1) vel_dx_ += scale_translation_ * button_z_scale_;
+        if (msg->buttons[10] == 1) vel_dx_ -= scale_translation_ * button_z_scale_;
       
-        vel_dyaw_   = msg->axes[2] * scale_rotation_;
-        vel_dpitch_ = msg->axes[3] * scale_rotation_;
+        vel_dyaw_   = -msg->axes[2] * scale_rotation_;
+        vel_dpitch_ = -msg->axes[3] * scale_rotation_;
         vel_droll_  = ((msg->axes[4] - msg->axes[5]) / 2.0) * scale_rotation_;
       }
     }
@@ -241,7 +279,8 @@ private:
         {
           std::lock_guard<std::mutex> lock(pose_mutex_);
           move_group_->setPlannerId("RRTstar");
-          move_group_->setPlanningTime(1.0);
+          move_group_->setPlanningTime(5.0);
+          move_group_->setNumPlanningAttempts(1);
           move_group_->setPoseTarget(target_pose_);
           if (move_group_->plan(local_plan) == moveit::core::MoveItErrorCode::SUCCESS) {
             RCLCPP_INFO(this->get_logger(), "Planificación exitosa. Puedes ejecutar el plan.");
@@ -333,6 +372,7 @@ private:
   geometry_msgs::msg::Pose target_pose_;
   double scale_translation_;
   double scale_rotation_;
+  double button_z_scale_;
   bool absolute_mode_;
   bool toggle_mode_pressed_;
   bool plan_button_pressed_;
