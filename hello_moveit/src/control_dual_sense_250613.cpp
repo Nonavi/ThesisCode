@@ -10,9 +10,6 @@
 #include <thread>
 #include <mutex>
 #include <unordered_map>  // NUEVO
-#include <tf2_ros/transform_broadcaster.h>
-#include <geometry_msgs/msg/transform_stamped.hpp>
-
 
 class DualSenseTeleop : public rclcpp::Node
 {
@@ -50,24 +47,6 @@ public:
     timer_ = this->create_wall_timer(
       std::chrono::milliseconds(20),
       std::bind(&DualSenseTeleop::update_pose_timer, this));
-      tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
-      camera_pose_index_ = 0;
-
-      // Publicar la pose inicial:
-      geometry_msgs::msg::TransformStamped tf_msg;
-      tf_msg.header.stamp = this->now();
-      tf_msg.header.frame_id = "world";
-      tf_msg.child_frame_id = "virtual_camera";
-
-      tf_msg.transform.translation.x = 0.0;
-      tf_msg.transform.translation.y = 0.0;
-      tf_msg.transform.translation.z = 0.0;
-      tf_msg.transform.rotation.x = 0.0;
-      tf_msg.transform.rotation.y = 0.0;
-      tf_msg.transform.rotation.z = 0.0;
-      tf_msg.transform.rotation.w = 1.0;
-
-      tf_broadcaster_->sendTransform(tf_msg);
   }
 
   void init_move_group()
@@ -249,62 +228,12 @@ private:
     {
       std::lock_guard<std::mutex> lock(pose_mutex_);
 
-      /*
       if (msg->buttons[1] == 1 && !toggle_mode_pressed_) {
         absolute_mode_ = !absolute_mode_;
         toggle_mode_pressed_ = true;
         RCLCPP_INFO(this->get_logger(), "Modo cambiado a: %s", absolute_mode_ ? "ABSOLUTO" : "RELATIVO");
       }
       if (msg->buttons[1] == 0) toggle_mode_pressed_ = false;
-      */
-      if (msg->buttons[1] == 1 && !toggle_mode_pressed_) {
-        toggle_mode_pressed_ = true;
-    
-        // Cicle entre las 3 poses
-        geometry_msgs::msg::TransformStamped tf_msg;
-        tf_msg.header.stamp = this->now();
-        tf_msg.header.frame_id = "world";
-        tf_msg.child_frame_id = "virtual_camera";
-    
-        if (camera_pose_index_ == 0) {
-            tf_msg.transform.translation.x = 0.0;
-            tf_msg.transform.translation.y = 0.0;
-            tf_msg.transform.translation.z = 0.0;
-            tf_msg.transform.rotation.x = 0.0;
-            tf_msg.transform.rotation.y = 0.0;
-            tf_msg.transform.rotation.z = 0.0;
-            tf_msg.transform.rotation.w = 1.0;
-            RCLCPP_INFO(this->get_logger(), "Pose 0 publicada.");
-        } else if (camera_pose_index_ == 1) {
-            tf_msg.transform.translation.x = 0.5;
-            tf_msg.transform.translation.y = -0.5;
-            tf_msg.transform.translation.z = 0.0;
-            tf_msg.transform.rotation.x = 0.0;
-            tf_msg.transform.rotation.y = 0.0;
-            tf_msg.transform.rotation.z = -0.89443;
-            tf_msg.transform.rotation.w = -0.44721;
-            RCLCPP_INFO(this->get_logger(), "Pose 1 publicada.");
-        } else if (camera_pose_index_ == 2) {
-            tf_msg.transform.translation.x = -0.5;
-            tf_msg.transform.translation.y = -0.5;
-            tf_msg.transform.translation.z = 0.0;
-            tf_msg.transform.rotation.x = 0.0;
-            tf_msg.transform.rotation.y = 0.0;
-            tf_msg.transform.rotation.z = 0.0;
-            tf_msg.transform.rotation.w = 1.0;
-            RCLCPP_INFO(this->get_logger(), "Pose 2 publicada.");
-        }
-    
-        tf_broadcaster_->sendTransform(tf_msg);
-    
-        // Avanzar contador
-        camera_pose_index_ = (camera_pose_index_ + 1) % 3;
-    
-        RCLCPP_INFO(this->get_logger(), "Cambiada pose de cámara. Nueva pose index: %d", camera_pose_index_);
-    }
-    if (msg->buttons[1] == 0) {
-        toggle_mode_pressed_ = false;
-    }
 
       if (absolute_mode_) {
         vel_dx_ = msg->axes[0] * scale_translation_;
@@ -438,9 +367,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr deteccion_publisher_;
   rclcpp::TimerBase::SharedPtr timer_;
   std::shared_ptr<moveit::planning_interface::MoveGroupInterface> move_group_;
-  std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
-  int camera_pose_index_;
-  
+
   tf2::Transform current_tf_;
   geometry_msgs::msg::Pose target_pose_;
   double scale_translation_;
